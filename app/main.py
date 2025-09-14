@@ -24,11 +24,11 @@ app.add_middleware(
 # }
 # Local config 
 db_config = {
-    "host": "localhost",
-    "user": "root",
-    "password": "root",
-    "port": "3306",
-    "database": "python_db"
+    "host": os.getenv("DB_HOST"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "port": os.getenv("DB_PORT"),
+    "database": os.getenv("DB_NAME")
 }
 def get_db_connection():
     return mysql.connector.connect(**db_config)
