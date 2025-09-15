@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import mysql.connector
@@ -16,25 +16,26 @@ app.add_middleware(
     allow_headers=["*"]
 )
 # Docker config
+db_config = {
+    "host": os.getenv("DB_HOST"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": os.getenv("DB_NAME")
+}
+# Local config 
 # db_config = {
 #     "host": os.getenv("DB_HOST"),
 #     "user": os.getenv("DB_USER"),
 #     "password": os.getenv("DB_PASSWORD"),
-#     "database": os.getenv("DB_NAME")
+#     "port": os.getenv("DB_PORT"),
+#     "database": os.getenv("DB_NAME"),
 # }
-# Local config 
-db_config = {
-    "host": "localhost",
-    "user": "root",
-    "password": "root",
-    "port": "3306",
-    "database": "python_db"
-}
+
 def get_db_connection():
     return mysql.connector.connect(**db_config)
 
 class User(BaseModel):
-    name: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=2)
     email: str = Field(..., min_length=1)
     password: str = Field(..., min_length=1)
 
@@ -44,16 +45,20 @@ def create_user(user: User):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
-        (user.name, user.email, user.password)
-    )
-    conn.commit()
+    try:
+        cursor.execute(
+            "INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
+            (user.name, user.email, user.password)
+        )
+        conn.commit()
+        return {"message": F"User {user.name} created!"}
 
-    cursor.close()
-    conn.close()
+    except mysql.connector.Error as error:
+        raise HTTPException(status_code=500, detail=str(error))
 
-    return {"message": F"User {user.name} created!"}
+    finally:
+        cursor.close()
+        conn.close()
 
 #READ ALL
 @app.get("/users")
@@ -61,15 +66,17 @@ def get_users():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("SELECT id, name, email FROM users;")
-    rows = cursor.fetchall()
+    try:
+        cursor.execute("SELECT id, name, email FROM users;")
+        users = cursor.fetchall()
+        return users
 
-    cursor.close()
-    conn.close()
-    
-    if rows is None:
-        return {"message": "No users found."}
-    return rows
+    except mysql.connector.Error as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    finally:
+        cursor.close()
+        conn.close()
 
 #READ ONE
 @app.get("/users/{id}")
@@ -77,52 +84,66 @@ def get_user(id):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("SELECT id, name, email FROM users WHERE id = %s", (id,))
-    rows = cursor.fetchone()
+    try:
+        cursor.execute("SELECT id, name, email FROM users WHERE id = %s", (id,))
+        user = cursor.fetchone()
+        if user is None:
+            return {"Message": F"No user found with ID: {id}"}
+        return user
 
-    cursor.close()
-    conn.close()
+    except mysql.connector.Error as error:
+        raise HTTPException(status_code=500, detail=str(error))
 
-    if rows is None:
-        return {"message": F"No user found with id {id}."}
-    return rows
+    finally:
+        cursor.close()
+        conn.close()
 
 #UPDATE
 @app.put("/users/{id}")
 def update_user(id, user: User):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
 
-    cursor.execute(
-        "UPDATE users SET name=%s, email=%s, password=%s WHERE id = %s",
-        (user.name, user.email, user.password, id))
-    conn.commit()
+    try:
+        cursor.execute(
+            "UPDATE users SET name=%s, email=%s, password=%s WHERE id = %s",
+            (user.name, user.email, user.password, id))
+        conn.commit()
 
-    rows = cursor.rowcount
+        updatedUser = cursor.rowcount
+        if updatedUser == 0:
+            return {"message": F"No user found with id {id}"}
+        return {"message": F"{updatedUser} user updated."}
+    
+    except mysql.connector.Error as error:
+        raise HTTPException(status_code=500, detail=str(error))
 
-    cursor.close()
-    conn.close()
-    if rows is None:
-        return {"message": F"No user found with id {id}."}
-    return {"message": F"{rows} user updated."}
+    finally:
+        cursor.close()
+        conn.close()
+
 
 # Delete
 @app.delete("/users/{id}")
 def delete_user(id):
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
     
-    cursor.execute("DELETE FROM users WHERE id = %s", (id))
-    conn.commit()
+    try:
+        cursor.execute("DELETE FROM users WHERE id = %s", (id,))
+        conn.commit()
 
-    rows = cursor.rowcount
+        deletedUser = cursor.rowcount
+        if deletedUser == 0:
+            return {"message": F"No user found with id {id}."}
+        return {"message": F"user #{id} deleted"}
+    
+    except mysql.connector.Error as error:
+        raise HTTPException(status_code=500, detail=str(error))
 
-    cursor.close()
-    conn.close()
-
-    if rows is None:
-        return {"message": F"No user found with id {id}."}
-    return {"message": F"user #{id} deleted"}
+    finally:
+        cursor.close()
+        conn.close()
 
 # If table doesnt exist, create it on startup
 def create_db_table():
